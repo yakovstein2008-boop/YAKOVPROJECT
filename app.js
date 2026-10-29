@@ -217,7 +217,7 @@ function toggle(id) {
   const key = todayKey(), rec = dayRec(key);
   const task = state.tasks.find(t => t.id === id);
   if (id === 'gratitude' && !(id in rec.done)) {
-    journalDay = key; showTab('journal');
+    openGood();
     return toast('כותבים 5 דברים טובים — וזה מסומן לבד ✍️');
   }
   if (id in rec.done) {
@@ -226,11 +226,15 @@ function toggle(id) {
   } else {
     const { pts, late } = award(rec, task);
     const all = tasksFor(today()).every(t => t.id in rec.done);
-    toast(all ? '🎉 סיימת את כל היום! הבונוס מגיע בלילה'
+    const msg = all ? '🎉 סיימת את כל היום! הבונוס מגיע בלילה'
       : task.kind === 'sleep' ? `לילה טוב 🌙 נרשם ${fmtTime(rec.at[id])}`
-      : late ? `+${pts} · חצי נקודות, באיחור` : `+${pts} נקודות`);
+      : late ? `+${pts} · חצי נקודות, באיחור` : `+${pts} נקודות`;
+    // After a learning session, offer to photograph the summary right away
+    const subject = splitIcon(task.name)[1];
+    toast(msg, LEARNING.test(task.name) ? { label: '📷 סיכום', run: () => photoNow(subject) } : null);
   }
   save(); render();
+  if (sheetRedraw) sheetBody(sheetRedraw());
 }
 
 function finishPenalty(i) {
@@ -296,13 +300,14 @@ function exportCalendar() {
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const CHECK = '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+const SEARCH = '<svg class="ico" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></svg>';
 
 function taskRow(t, rec, cls, when) {
   const [icon, name] = splitIcon(t.name);
-  return `<div class="task ${cls}" onclick="toggle('${t.id}')">
+  return `<div class="task ${cls}" role="button" tabindex="0" onclick="toggle('${t.id}')">
     <div class="ic">${icon}</div>
     <div class="body"><div class="name">${esc(name)}</div><div class="when">${when}</div></div>
-    <button class="check" aria-label="סימון">${CHECK}</button>
+    <span class="check" aria-label="${cls === 'done' ? 'בוצע' : 'לא בוצע'}">${CHECK}</span>
   </div>`;
 }
 
@@ -321,7 +326,8 @@ function renderHome() {
   const somedayOpen = state.someday.filter(x => !x.done).length;
   const special = rec.dayType && rec.dayType !== 'normal';
 
-  let html = `<h1>${greeting}</h1>
+  let html = `<div class="head"><h1>${greeting}</h1>
+      <button class="round" aria-label="חיפוש ותפריט" onclick="openMenu(true)">${SEARCH}</button></div>
     <div class="sub">${now.toLocaleDateString('he-IL', { weekday: 'long', day: 'numeric', month: 'long' })}${special ? ' · ' + DAY_TYPES[rec.dayType]?.label : ''}</div>`;
 
   // Hero
@@ -357,8 +363,8 @@ function renderHome() {
       ${'Notification' in window && Notification.permission !== 'granted' ? '<button class="pill" onclick="askNotify()">🔔 התראות</button>' : ''}
     </div>
     <div class="statline">
-      <div><b>${state.points}</b><span>נקודות</span></div>
-      <div><b>${state.streak}🔥</b><span>רצף</span></div>
+      <div role="button" tabindex="0" onclick="showTab('rewards')"><b>${state.points}</b><span>נקודות</span></div>
+      <div role="button" tabindex="0" onclick="showTab('stats')"><b>${state.streak}🔥</b><span>רצף</span></div>
       <div><b>${doneCount}/${tasks.length}</b><span>היום</span></div>
     </div>
     <div class="bar"><i style="width:${pct}%"></i></div>`;
@@ -395,14 +401,19 @@ function renderHome() {
 }
 
 // ---------- Bottom sheets ----------
-function openSheet(html) {
-  closeSheet();
-  const bd = document.createElement('div'); bd.className = 'backdrop'; bd.onclick = closeSheet;
+// redraw: optional function that rebuilds the sheet after something changes inside it
+let sheetRedraw = null;
+function openSheet(html, redraw = null) {
+  removeSheet();
+  sheetRedraw = redraw;
+  const bd = document.createElement('div'); bd.className = 'backdrop'; bd.onclick = () => closeSheet();
   const sh = document.createElement('div'); sh.className = 'sheet'; sh.id = 'sheet';
-  sh.innerHTML = `<div class="grab"></div><div id="sheet-body">${html}</div>`;
+  sh.setAttribute('role', 'dialog'); sh.setAttribute('aria-modal', 'true');
+  sh.innerHTML = `<div class="grab"></div><button class="sheet-x" aria-label="סגירה" onclick="closeSheet()">✕</button><div id="sheet-body">${html}</div>`;
   document.body.append(bd, sh);
 }
-function closeSheet() { document.querySelector('.backdrop')?.remove(); $('sheet')?.remove(); render(); }
+function removeSheet() { document.querySelector('.backdrop')?.remove(); $('sheet')?.remove(); sheetRedraw = null; }
+function closeSheet() { removeSheet(); render(); }
 function sheetBody(html) { if ($('sheet-body')) $('sheet-body').innerHTML = html; }
 
 // "I have 10 minutes": one suggestion at a time from the someday list or quick ideas
@@ -513,6 +524,109 @@ function setOff(id, off) {
 }
 DAY_TYPES.custom = { label: 'מותאם', off: () => [] };
 
+// ---------- Menu: one place to reach everything ----------
+function photoNow(subject) {
+  if (subject) photoSubject = subject;
+  journalDay = todayKey(); showTab('journal');
+  document.querySelector('#tab-journal input[type=file]')?.click();
+}
+function openGood() {
+  journalDay = todayKey(); showTab('journal');
+  const empty = [...document.querySelectorAll('.good input')].find(x => !x.value.trim());
+  empty?.focus();
+}
+function goSleep() { showTab('stats'); setTimeout(() => $('sleep')?.scrollIntoView({ behavior: 'smooth' }), 50); }
+
+function checklistHtml() {
+  const now = today(), rec = dayRec(dateKey(now)), m = nowMinutes();
+  const pending = tasksFor(now).filter(t => !(t.id in rec.done));
+  return `<h1>לסמן משימה</h1><div class="sub">${pending.length ? `נשארו ${pending.length} משימות להיום` : 'הכל בוצע 🎉'}</div>
+    <div style="margin-top:8px">${pending.map(t => taskRow(t, rec,
+      m > minutesOf(t.time) + LATE_GRACE_MIN ? 'late' : '', m > minutesOf(t.time) + LATE_GRACE_MIN ? `${t.time} · באיחור` : t.time)).join('')}</div>`;
+}
+function openChecklist() { openSheet(checklistHtml(), checklistHtml); }
+
+// Everything the menu can do; also the search index
+function menuActions() {
+  const acts = [
+    { icon: '✓', title: 'לסמן משימה', sub: 'מה שנשאר להיום', keys: 'סימון בוצע עשיתי', run: openChecklist },
+    { icon: '⏱', title: 'יש לי 10 דקות', sub: 'רעיון למשהו קצר', keys: 'זמן פנוי הפסקה', run: openQuick },
+    { icon: '📝', title: 'מתי שיהיה זמן', sub: 'להוסיף לרשימה', keys: 'רשימה משימות לא דחופות', run: openSomeday },
+    { icon: '📷', title: 'לצלם סיכום', sub: 'נשמר לפי נושא', keys: 'תמונה מצלמה סיכומים', run: () => photoNow() },
+    { icon: '✨', title: '5 דברים טובים', sub: 'היומן של היום', keys: 'יומן תודה', run: openGood },
+    { icon: '🗓', title: 'יום מיוחד', sub: 'טיול, בבית, חברותא בוטלה', keys: 'חופש חולה טיול לכבות', run: openSpecial },
+    { icon: '📊', title: 'סיכום שבועי', sub: 'איך היה השבוע', keys: 'נתונים סטטיסטיקה יעד', run: () => showTab('stats') },
+    { icon: '🌙', title: 'שעת שינה', sub: 'גרף שינה וקימה', keys: 'לישון קימה', run: goSleep },
+    { icon: '🏆', title: 'פרסים', sub: `${state.points} נקודות`, keys: 'נקודות חנות', run: () => showTab('rewards') },
+    { icon: '✏️', title: 'לערוך את הלוז', sub: 'שעות, ימים, נקודות', keys: 'משימות הגדרות שעה', run: () => openSettings('tasks') },
+    { icon: '📅', title: 'תזכורות', sub: 'התראות ויומן הטלפון', keys: 'התראה יומן', run: () => openSettings('reminders') },
+    { icon: '⚙️', title: 'הגדרות', sub: 'כל ההגדרות', keys: 'עונשים פרסים איפוס', run: () => openSettings() },
+  ];
+  const pen = state.penalties.findIndex(p => !p.done);
+  if (pen >= 0) acts.unshift({ icon: '⚠️', title: 'לבצע עונש', sub: state.penalties[pen].text, keys: 'עונש', run: () => showTab('home') });
+  return acts;
+}
+
+// What makes sense right now, based on the time and what's been done
+function suggestions() {
+  const now = today(), key = dateKey(now), rec = dayRec(key), m = nowMinutes();
+  const tasks = tasksFor(now), out = [];
+  const pen = state.penalties.find(p => !p.done);
+  if (pen) out.push({ icon: '⚠️', title: `עונש פתוח: ${pen.text}`, run: () => showTab('home') });
+  const current = tasks.filter(t => !(t.id in rec.done) && minutesOf(t.time) <= m && m <= minutesOf(t.time) + LATE_GRACE_MIN).pop();
+  if (current) out.push({ icon: '✓', title: `לסמן: ${splitIcon(current.name)[1]}`, run: () => { toggle(current.id); } });
+  // A learning task finished in the last hour → photograph its summary
+  const learned = tasks.filter(t => LEARNING.test(t.name) && rec.at[t.id] != null && m - rec.at[t.id] <= 60).pop();
+  if (learned) out.push({ icon: '📷', title: `לצלם סיכום: ${splitIcon(learned.name)[1]}`, run: () => photoNow(splitIcon(learned.name)[1]) });
+  const good = tasks.find(t => t.id === 'gratitude');
+  if (good && !(good.id in rec.done) && m >= minutesOf(good.time) - 45) out.push({ icon: '✨', title: 'לכתוב 5 דברים טובים', run: openGood });
+  if (now.getDay() === 5 || (now.getDay() === 4 && m >= 21 * 60)) out.push({ icon: '📊', title: 'הסיכום השבועי מוכן', run: () => showTab('stats') });
+  const next = tasks.find(t => !(t.id in rec.done) && minutesOf(t.time) > m);
+  if (!current && next && minutesOf(next.time) - m >= 10) out.push({ icon: '⏱', title: `${fmtIn(minutesOf(next.time) - m)} עד ${splitIcon(next.name)[1]} — מה לעשות?`, run: openQuick });
+  return out.slice(0, 3);
+}
+
+let menuRuns = [];
+function runMenu(i) { const f = menuRuns[i]; removeSheet(); f(); }
+function menuItem(x, cls = 'mrow') {
+  menuRuns.push(x.run);
+  return `<div class="${cls}" role="button" tabindex="0" onclick="runMenu(${menuRuns.length - 1})">
+    <div class="ic">${x.icon}</div><div class="grow"><b>${esc(x.title)}</b>${x.sub ? `<div class="sub">${esc(x.sub)}</div>` : ''}</div></div>`;
+}
+function menuResults(q) {
+  menuRuns = [];
+  const norm = v => v.toLowerCase().replace(/[^\p{L}\p{N} ]/gu, '');
+  const words = norm(q).split(' ').filter(Boolean);
+  if (!words.length) {
+    const sug = suggestions();
+    return (sug.length ? `<h2 style="margin-top:18px">מוצע עכשיו</h2>${sug.map(x => menuItem(x, 'mrow sug')).join('')}` : '')
+      + `<h2>הכל</h2><div class="tiles">${menuActions().map(x => {
+        menuRuns.push(x.run);
+        return `<button class="tile" onclick="runMenu(${menuRuns.length - 1})"><span>${x.icon}</span>${esc(x.title)}</button>`;
+      }).join('')}</div>`;
+  }
+  const rec = dayRec(todayKey()), todays = tasksFor(today());
+  const pool = [
+    ...menuActions(),
+    ...state.tasks.map((t, i) => {
+      const pending = todays.includes(t) && !(t.id in rec.done);
+      return { icon: splitIcon(t.name)[0], title: splitIcon(t.name)[1], keys: 'משימה',
+        sub: `${t.time} · ${pending ? 'נגיעה לסימון' : 'נגיעה לעריכה'}`,
+        run: pending ? () => toggle(t.id) : () => { openSettings('tasks'); openTaskEdit(i); } };
+    }),
+    ...state.someday.filter(x => !x.done).map(x => ({ icon: '📝', title: x.text, sub: 'ברשימה "מתי שיהיה זמן"', run: openSomeday })),
+    ...subjects().map(n => ({ icon: '📷', title: `סיכומים: ${n}`, keys: 'תמונות', run: () => { photoFilter = n; showTab('journal'); } })),
+    ...Object.entries(SETTINGS_PAGES).map(([k, v]) => ({ icon: v.icon, title: v.title, sub: 'הגדרות', run: () => openSettings(k) })),
+  ];
+  const hits = pool.filter(x => { const h = norm(`${x.title} ${x.sub || ''} ${x.keys || ''}`); return words.every(w => h.includes(w)); });
+  return hits.length ? hits.slice(0, 12).map(x => menuItem(x)).join('') : '<div class="sub" style="padding:16px 0">לא נמצא. אפשר לנסות מילה אחרת.</div>';
+}
+function openMenu(focus = false) {
+  openSheet(`<div class="search">${SEARCH}<input id="menu-q" type="search" placeholder="חיפוש: משימה, חברותא, פעולה..." aria-label="חיפוש"
+      oninput="$('menu-res').innerHTML=menuResults(this.value)"></div><div id="menu-res">${menuResults('')}</div>`);
+  if (focus) $('menu-q').focus();
+}
+
 // ---------- Stats ----------
 function avg(xs) { return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null; }
 function timesOf(kind, keys) {
@@ -595,7 +709,7 @@ async function renderStats() {
   const wakeTask = state.tasks.find(t => t.kind === 'wake');
   if (sleepTask) {
     const vals = timesOf('sleep', keys14), real = vals.filter(v => v != null);
-    html += `<h2>שעת שינה אמיתית</h2>
+    html += `<h2 id="sleep">שעת שינה אמיתית</h2>
       <div class="sub">נרשם כשמסמנים "${esc(splitIcon(sleepTask.name)[1])}". הקו = היעד (${sleepTask.time}). גבוה יותר = מאוחר יותר.</div>
       ${timeBars(vals, keys14, 22 * 60, 26 * 60, minutesOf(sleepTask.time))}
       <div class="sub" style="margin-top:6px">${real.length ? `ממוצע ${fmtTime(avg(real))} · הכי מאוחר ${fmtTime(Math.max(...real))}` : 'עוד אין נתונים'}</div>`;
@@ -646,46 +760,91 @@ function renderRewards() {
 }
 
 // ---------- Settings ----------
+let settingsPage = null;   // null = the settings menu
+const SETTINGS_PAGES = {
+  tasks:     { icon: '✏️', title: 'לוז ומשימות', sub: () => `${state.tasks.length} משימות` },
+  reminders: { icon: '📅', title: 'תזכורות ויומן', sub: () => 'התראות גם כשהאפליקציה סגורה' },
+  rewards:   { icon: '🏆', title: 'פרסים', sub: () => `${state.rewards.length} פרסים` },
+  penalties: { icon: '⚠️', title: 'עונשים', sub: () => `${state.penaltyList.length} עונשים` },
+  quick:     { icon: '⏱', title: 'רעיונות ל-10 דקות', sub: () => `${state.quick.length} רעיונות` },
+  reset:     { icon: '🔄', title: 'איפוס', sub: () => 'להתחיל מאפס' },
+};
+function openSettings(page = null) { showTab('settings'); settingsPage = page; renderSettings(); }
+function daysLabel(days) {
+  const k = [...days].sort().join();
+  if (k === STUDY.join()) return 'א׳–ה׳';
+  if (k === ALL.join()) return 'א׳–ו׳';
+  if (!days.length) return 'אף יום';
+  return days.map(d => DAY_NAMES[d] + '׳').join(' ');
+}
+
 function renderSettings() {
-  let html = `<h1>הגדרות</h1>
-    <h2>תזכורות כשהאפליקציה סגורה</h2>
-    <div class="sub">מוסיף את הלוז ליומן של הטלפון עם התראה בכל משימה. אחרי שינוי — למחוק את האירועים הישנים ולהוסיף שוב.</div>
-    <button class="btn" onclick="exportCalendar()">להוסיף את הלוז ליומן</button>
-    <h2>המשימות שלי</h2>
-    <div class="sub" style="margin-bottom:10px">★ = משימה חשובה, מופיעה במעקב בלשונית נתונים.</div>`;
-  state.tasks.forEach((t, i) => {
-    html += `<div class="edit">
-      <div class="row">
-        <input class="name-in" value="${esc(t.name)}" onchange="setTask(${i},'name',this.value)">
-        <button class="iconbtn ${t.key ? 'on' : ''}" onclick="setTask(${i},'key',${!t.key});render()">★</button>
-        <button class="iconbtn" style="color:var(--muted)" onclick="delTask(${i})">✕</button>
-      </div>
-      <div class="row" style="margin-top:8px">
-        <input type="time" value="${t.time}" onchange="setTask(${i},'time',this.value)">
-        <input type="number" min="1" value="${t.points}" onchange="setTask(${i},'points',+this.value)"><span class="sub">נקודות</span>
-      </div>
-      <div class="days">${DAY_NAMES.map((n, d) =>
-        `<label><input type="checkbox" ${t.days.includes(d) ? 'checked' : ''} onchange="setDay(${i},${d},this.checked)">${n}</label>`).join('')}</div>
-    </div>`;
-  });
-  html += `<button class="btn soft" onclick="addTask()">+ משימה חדשה</button>
-    <h2>פרסים</h2>`;
-  state.rewards.forEach((r, i) => {
-    html += `<div class="edit row">
-      <input class="name-in" value="${esc(r.name)}" onchange="state.rewards[${i}].name=this.value;save()">
-      <input type="number" min="1" value="${r.cost}" onchange="state.rewards[${i}].cost=+this.value;save()">
-      <button class="iconbtn" style="color:var(--muted)" onclick="state.rewards.splice(${i},1);save();render()">✕</button>
-    </div>`;
-  });
-  html += `<button class="btn soft" onclick="state.rewards.push({name:'פרס חדש',cost:100});save();render()">+ פרס חדש</button>
-    <h2>עונשים</h2><div class="sub" style="margin-bottom:8px">אחד בכל שורה, נבחר באקראי.</div>
-    <textarea onchange="state.penaltyList=lines(this.value);save()">${esc(state.penaltyList.join('\n'))}</textarea>
-    <h2>רעיונות ל"יש לי 10 דקות"</h2><div class="sub" style="margin-bottom:8px">אחד בכל שורה.</div>
-    <textarea onchange="state.quick=lines(this.value);save()">${esc(state.quick.join('\n'))}</textarea>
-    <h2>איפוס</h2>
-    <button class="btn soft" style="color:var(--bad)" onclick="if(confirm('למחוק הכל ולהתחיל מחדש?')){localStorage.removeItem(KEY);location.reload()}">להתחיל מאפס</button>`;
+  const page = SETTINGS_PAGES[settingsPage];
+  let html = page
+    ? `<button class="back" onclick="settingsPage=null;renderSettings()">→ הגדרות</button><h1>${page.title}</h1>`
+    : '<h1>הגדרות</h1>';
+
+  if (!page) {
+    html += '<div class="menu-list">' + Object.entries(SETTINGS_PAGES).map(([k, v]) =>
+      `<div class="mrow" role="button" tabindex="0" onclick="settingsPage='${k}';renderSettings();scrollTo(0,0)">
+        <div class="ic">${v.icon}</div><div class="grow"><b>${v.title}</b><div class="sub">${v.sub()}</div></div><span class="chev">‹</span></div>`).join('') + '</div>';
+  } else if (settingsPage === 'tasks') {
+    html += `<div class="sub" style="margin-bottom:6px">נגיעה במשימה לעריכה. ★ = חשובה, מופיעה במעקב.</div>`;
+    const sorted = state.tasks.map((t, i) => ({ t, i })).sort((a, b) => minutesOf(a.t.time) - minutesOf(b.t.time));
+    html += sorted.map(({ t, i }) => {
+      const [icon, name] = splitIcon(t.name);
+      return `<div class="mrow" role="button" tabindex="0" onclick="openTaskEdit(${i})">
+        <div class="ic">${icon}</div>
+        <div class="grow"><b>${esc(name)}</b><div class="sub">${t.time} · ${daysLabel(t.days)} · ${t.points} נק'</div></div>
+        ${t.key ? '<span class="star">★</span>' : ''}<span class="chev">‹</span></div>`;
+    }).join('');
+    html += `<button class="btn soft" onclick="addTask()">+ משימה חדשה</button>`;
+  } else if (settingsPage === 'reminders') {
+    html += `<div class="card"><b>התראות באפליקציה</b>
+        <div class="sub">${!('Notification' in window) ? 'הדפדפן הזה לא תומך בהתראות. באייפון — רק מהאפליקציה במסך הבית.'
+          : Notification.permission === 'granted' ? 'מופעלות ✓' : 'כבויות'}</div>
+        ${'Notification' in window && Notification.permission !== 'granted' ? '<button class="btn small" style="margin-top:10px" onclick="askNotify()">להפעיל</button>' : ''}</div>
+      <div class="card"><b>תזכורות ביומן של הטלפון</b>
+        <div class="sub">התראה בכל משימה גם כשהאפליקציה סגורה. אחרי שינוי בלוז — למחוק את האירועים הישנים מהיומן ולהוסיף שוב.</div>
+        <button class="btn" onclick="exportCalendar()">להוסיף את הלוז ליומן</button></div>`;
+  } else if (settingsPage === 'rewards') {
+    html += state.rewards.map((r, i) => `<div class="edit row">
+      <input class="name-in" aria-label="שם הפרס" value="${esc(r.name)}" onchange="state.rewards[${i}].name=this.value;save()">
+      <input type="number" min="1" aria-label="מחיר בנקודות" value="${r.cost}" onchange="state.rewards[${i}].cost=+this.value;save()">
+      <button class="iconbtn" aria-label="מחיקה" style="color:var(--muted)" onclick="state.rewards.splice(${i},1);save();render()">✕</button>
+    </div>`).join('') + `<button class="btn soft" onclick="state.rewards.push({name:'פרס חדש',cost:100});save();render()">+ פרס חדש</button>`;
+  } else if (settingsPage === 'penalties') {
+    html += `<div class="sub" style="margin-bottom:8px">אחד בכל שורה, נבחר באקראי כשמפספסים.</div>
+      <textarea aria-label="עונשים" onchange="state.penaltyList=lines(this.value);save();toast('נשמר')">${esc(state.penaltyList.join('\n'))}</textarea>`;
+  } else if (settingsPage === 'quick') {
+    html += `<div class="sub" style="margin-bottom:8px">אחד בכל שורה. "יש לי 10 דקות" בוחר מכאן ומהרשימה "מתי שיהיה זמן".</div>
+      <textarea aria-label="רעיונות" onchange="state.quick=lines(this.value);save();toast('נשמר')">${esc(state.quick.join('\n'))}</textarea>`;
+  } else if (settingsPage === 'reset') {
+    html += `<div class="sub">מוחק נקודות, היסטוריה ויומן. התמונות נשארות.</div>
+      <button class="btn soft" style="color:var(--bad)" onclick="if(confirm('למחוק הכל ולהתחיל מחדש?')){localStorage.removeItem(KEY);location.reload()}">להתחיל מאפס</button>`;
+  }
   $('tab-settings').innerHTML = html;
 }
+
+function taskEditHtml(i) {
+  const t = state.tasks[i];
+  if (!t) return '';
+  return `<h1>עריכת משימה</h1>
+    <label class="field">שם<input value="${esc(t.name)}" onchange="setTask(${i},'name',this.value)"></label>
+    <div class="row" style="margin-top:12px">
+      <label class="field">שעה<input type="time" value="${t.time}" onchange="setTask(${i},'time',this.value)"></label>
+      <label class="field">נקודות<input type="number" min="1" value="${t.points}" onchange="setTask(${i},'points',+this.value)"></label>
+    </div>
+    <div class="field" style="margin-top:12px">ימים</div>
+    <div class="days">${DAY_NAMES.map((n, d) =>
+      `<label><input type="checkbox" ${t.days.includes(d) ? 'checked' : ''} onchange="setDay(${i},${d},this.checked)">${n}</label>`).join('')}</div>
+    <div class="item" style="margin-top:8px"><div class="grow">★ משימה חשובה (במעקב)</div>
+      <label class="switch"><input type="checkbox" ${t.key ? 'checked' : ''} onchange="setTask(${i},'key',this.checked)"><i></i></label></div>
+    <button class="btn" onclick="closeSheet()">שמירה</button>
+    <button class="btn soft" style="color:var(--bad)" onclick="delTask(${i})">מחיקת המשימה</button>`;
+}
+function openTaskEdit(i) { openSheet(taskEditHtml(i)); }
+
 function lines(v) { return v.split('\n').map(s => s.trim()).filter(Boolean); }
 function setTask(i, field, val) { state.tasks[i][field] = val; save(); }
 function setDay(i, d, on) {
@@ -694,15 +853,16 @@ function setDay(i, d, on) {
   state.tasks[i].days = [...days].sort();
   save();
 }
-function delTask(i) { if (confirm(`למחוק את "${state.tasks[i].name}"?`)) { state.tasks.splice(i, 1); save(); render(); } }
+function delTask(i) { if (confirm(`למחוק את "${state.tasks[i].name}"?`)) { state.tasks.splice(i, 1); save(); closeSheet(); } }
 function addTask() {
   state.tasks.push({ id: 't' + Date.now(), name: 'משימה חדשה', time: '12:00', points: 10, days: [...STUDY] });
-  save(); render();
+  save(); render(); openTaskEdit(state.tasks.length - 1);
 }
 
 // ---------- Journal: 5 good things + photos of summaries ----------
 let journalDay = todayKey();
 let photoFilter = '';   // '' = everything
+let photoSubject = '';
 let photoUrls = [];
 
 function goodThings(key) { return state.journal[key] || ['', '', '', '', '']; }
@@ -827,9 +987,10 @@ async function renderJournal() {
     </div>
     <h2>5 דברים טובים שקרו ${isToday ? 'היום' : 'ביום הזה'}</h2>
     ${list.map((v, i) => `<div class="good"><span>${i + 1}</span>
-      <input value="${esc(v)}" placeholder="${hints[i]}" oninput="setGood(${i}, this.value)"></div>`).join('')}
+      <input value="${esc(v)}" placeholder="${hints[i]}" aria-label="דבר טוב ${i + 1}" oninput="setGood(${i}, this.value)"></div>`).join('')}
     <h2>סיכומים</h2>
-    <select id="photo-subject" style="width:100%">${subjects().map(n => `<option>${esc(n)}</option>`).join('')}</select>
+    <select id="photo-subject" style="width:100%" aria-label="נושא הסיכום" onchange="photoSubject=this.value">${subjects().map(n =>
+      `<option ${n === photoSubject ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
     <input id="photo-note" placeholder="הערה (לא חובה), למשל: פרק ז'" style="width:100%;margin-top:8px">
     <label class="btn accent">📷 לצלם / להעלות סיכום
       <input type="file" accept="image/*" multiple hidden onchange="addPhotos([...this.files])">
@@ -861,6 +1022,8 @@ function render() {
   if (currentTab === 'settings') renderSettings();
 }
 function showTab(name) {
+  removeSheet();
+  if (name === 'settings' && currentTab !== 'settings') settingsPage = null;
   currentTab = name;
   document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x.dataset.tab === name));
   document.querySelectorAll('section').forEach(s => s.classList.toggle('hidden', s.id !== 'tab-' + name));
@@ -868,15 +1031,22 @@ function showTab(name) {
   render();
   scrollTo(0, 0);
 }
-document.querySelectorAll('nav button').forEach(b => b.onclick = () => showTab(b.dataset.tab));
+document.querySelectorAll('nav button[data-tab]').forEach(b => b.onclick = () => showTab(b.dataset.tab));
 
 let toastTimer;
-function toast(text) {
+function toast(text, action = null) {
   document.querySelector('.toast')?.remove();
   const el = document.createElement('div');
-  el.className = 'toast'; el.textContent = text;
+  el.className = 'toast'; el.setAttribute('role', 'status');
+  el.append(text);
+  if (action) {
+    const b = document.createElement('button');
+    b.textContent = action.label;
+    b.onclick = () => { el.remove(); action.run(); };
+    el.append(b);
+  }
   document.body.appendChild(el);
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => el.remove(), 2400);
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => el.remove(), action ? 5000 : 2400);
 }
 
 async function askNotify() {
@@ -886,6 +1056,9 @@ async function askNotify() {
 }
 
 // ---------- Start ----------
+document.addEventListener('keydown', e => {
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.matches?.('[role=button]')) { e.preventDefault(); e.target.click(); }
+});
 navigator.storage?.persist?.();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
 evaluatePastDays();
