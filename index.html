@@ -49,11 +49,11 @@
   .penalty { background: #3a1f28; border: 2px solid var(--bad); border-radius: 14px; padding: 14px; margin: 12px 0; }
   .penalty b { color: var(--bad); }
   .msg { background: #1f3a2f; border: 2px solid var(--good); border-radius: 14px; padding: 14px; margin: 12px 0; }
-  button.btn {
+  .btn {
     background: var(--accent); color: #fff; border: 0; border-radius: 12px;
     padding: 12px 16px; font-size: 16px; font-family: inherit; width: 100%; margin-top: 8px;
   }
-  button.btn.ghost { background: var(--card); border: 1px solid var(--line); }
+  .btn.ghost { background: var(--card); border: 1px solid var(--line); }
   button.small { width: auto; padding: 8px 12px; font-size: 14px; margin: 0; }
   .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   input, textarea {
@@ -89,6 +89,33 @@
   nav button b { display: block; font-size: 22px; }
   nav button.on { color: var(--gold); }
   .hidden { display: none; }
+  .good { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .good span { color: var(--gold); width: 18px; font-weight: 700; }
+  .good input { flex: 1; }
+  .daynav { display: flex; align-items: center; justify-content: space-between; margin: 10px 0; }
+  .daynav button { width: 44px; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+  .chips button {
+    background: var(--card); color: var(--text); border: 1px solid var(--line);
+    border-radius: 20px; padding: 6px 12px; font-size: 14px; font-family: inherit;
+  }
+  .chips button.on { background: var(--accent); border-color: var(--accent); }
+  .gallery { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .gallery div { position: relative; aspect-ratio: 1; border-radius: 10px; overflow: hidden; background: var(--card); }
+  .gallery img { width: 100%; height: 100%; object-fit: cover; }
+  .gallery small {
+    position: absolute; bottom: 0; inset-inline: 0; background: #000a; font-size: 11px;
+    padding: 3px 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  select {
+    background: var(--bg); color: var(--text); border: 1px solid var(--line);
+    border-radius: 10px; padding: 9px; font-size: 16px; font-family: inherit; flex: 1;
+  }
+  .viewer {
+    position: fixed; inset: 0; background: #000e; z-index: 8; display: flex; flex-direction: column;
+    padding: calc(16px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom));
+  }
+  .viewer img { flex: 1; min-height: 0; object-fit: contain; width: 100%; }
   .toast {
     position: fixed; top: 20px; inset-inline: 16px; background: var(--gold); color: #222;
     padding: 14px; border-radius: 14px; text-align: center; font-weight: 600; z-index: 9;
@@ -99,11 +126,13 @@
 <body>
 
 <section id="tab-today"></section>
+<section id="tab-journal" class="hidden"></section>
 <section id="tab-rewards" class="hidden"></section>
 <section id="tab-settings" class="hidden"></section>
 
 <nav>
   <button data-tab="today" class="on"><b>📋</b>היום</button>
+  <button data-tab="journal"><b>📓</b>יומן</button>
   <button data-tab="rewards"><b>🏆</b>פרסים</button>
   <button data-tab="settings"><b>⚙️</b>הגדרות</button>
 </nav>
@@ -115,7 +144,7 @@ const STUDY = [0, 1, 2, 3, 4];   // Sunday–Thursday: full mechina day
 const ALL = [0, 1, 2, 3, 4, 5];  // Sunday–Friday; Shabbat is a rest day
 const FRIDAY = [5];
 
-const SCHEDULE_VERSION = 2;
+const SCHEDULE_VERSION = 3;
 const DEFAULT_TASKS = [
   { name: '⏰ קימה: לסדר חדר, שיניים, להתלבש', time: '07:00', points: 20, days: ALL },
   { name: '🙏 שחרית',                         time: '07:15', points: 25, days: ALL },
@@ -137,6 +166,7 @@ const DEFAULT_TASKS = [
   { name: '🙏 ערבית',                         time: '20:45', points: 10, days: STUDY },
   { name: '👥 גרוסי – עבודה זרה',             time: '21:00', points: 10, days: STUDY },
   { name: '💪 שיעור ערב שני / אימון / ריצה',  time: '22:00', points: 15, days: STUDY },
+  { id: 'gratitude', name: '✍️ 5 דברים טובים שקרו היום', time: '23:00', points: 15, days: STUDY },
   { name: '🚿 מקלחת',                         time: '23:15', points: 5,  days: STUDY },
   { name: '😴 לישון',                         time: '23:45', points: 15, days: STUDY },
   { name: '🧹 לסדר את החדר לשבת',             time: '12:00', points: 15, days: FRIDAY },
@@ -169,7 +199,11 @@ function load() {
   try {
     const s = JSON.parse(localStorage.getItem(KEY));
     if (s) {
-      if (s.scheduleVersion !== SCHEDULE_VERSION) { s.tasks = DEFAULT_TASKS; s.scheduleVersion = SCHEDULE_VERSION; }
+      if (!s.scheduleVersion || s.scheduleVersion < 2) s.tasks = DEFAULT_TASKS;
+      // v3 adds the journal task without touching the user's own edits
+      if (!s.tasks.some(t => t.id === 'gratitude')) s.tasks.push(DEFAULT_TASKS.find(t => t.id === 'gratitude'));
+      s.journal ||= {};
+      s.scheduleVersion = SCHEDULE_VERSION;
       return s;
     }
   } catch (e) {}
@@ -180,6 +214,7 @@ function load() {
     penalties: [],     // { text, date, done }
     lastEval: dateKey(addDays(today(), -1)),
     notified: {}, scheduleVersion: SCHEDULE_VERSION,
+    journal: {},      // 'YYYY-MM-DD' -> ['', '', '', '', '']
   };
 }
 function save() { localStorage.setItem(KEY, JSON.stringify(state)); }
@@ -244,6 +279,10 @@ function toggle(id) {
   const key = dateKey(today());
   const rec = dayRec(key);
   const task = state.tasks.find(t => t.id === id);
+  if (id === 'gratitude' && !(id in rec.done)) {
+    journalDay = key; showTab('journal');
+    return toast('כותבים 5 דברים טובים — וזה מסומן לבד ✍️');
+  }
   if (id in rec.done) {
     state.points = Math.max(0, state.points - rec.done[id]);
     delete rec.done[id];
@@ -454,14 +493,17 @@ function render() {
   if (currentTab === 'today') renderToday();
   if (currentTab === 'rewards') renderRewards();
   if (currentTab === 'settings') renderSettings();
+  if (currentTab === 'journal') renderJournal();
 }
-document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
-  currentTab = b.dataset.tab;
-  document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x === b));
-  document.querySelectorAll('section').forEach(s => s.classList.toggle('hidden', s.id !== 'tab-' + currentTab));
+function showTab(name) {
+  currentTab = name;
+  document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x.dataset.tab === name));
+  document.querySelectorAll('section').forEach(s => s.classList.toggle('hidden', s.id !== 'tab-' + name));
   report = [];
   render();
-});
+  scrollTo(0, 0);
+}
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => showTab(b.dataset.tab));
 
 let toastTimer;
 function toast(text) {
@@ -478,7 +520,165 @@ async function askNotify() {
   render();
 }
 
+// ---------- Journal: 5 good things + photos of summaries ----------
+let journalDay = dateKey(today());
+let photoFilter = '';   // '' = everything
+let photoUrls = [];
+
+function goodThings(key) { return state.journal[key] || ['', '', '', '', '']; }
+
+function setGood(i, val) {
+  const key = journalDay;
+  const list = [...goodThings(key)];
+  list[i] = val;
+  state.journal[key] = list;
+  // Completing all five on today's page checks off the journal task
+  const rec = dayRec(key), task = state.tasks.find(t => t.id === 'gratitude');
+  const full = list.every(x => x.trim());
+  if (key === dateKey(today()) && task && task.days.includes(today().getDay())) {
+    if (full && !('gratitude' in rec.done)) {
+      const late = nowMinutes() > minutesOf(task.time) + LATE_GRACE_MIN;
+      const pts = late ? Math.ceil(task.points / 2) : task.points;
+      rec.done.gratitude = pts; state.points += pts;
+      toast(`✍️ יפה! +${pts} נקודות`);
+    } else if (!full && 'gratitude' in rec.done) {
+      state.points = Math.max(0, state.points - rec.done.gratitude);
+      delete rec.done.gratitude;
+    }
+  }
+  save();
+}
+
+// Photos live in IndexedDB: localStorage is far too small for images
+let dbPromise;
+function db() {
+  return dbPromise ||= new Promise((ok, fail) => {
+    const req = indexedDB.open('luz-photos', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('photos', { keyPath: 'id', autoIncrement: true });
+    req.onsuccess = () => ok(req.result);
+    req.onerror = () => fail(req.error);
+  });
+}
+async function photoStore(mode) { return (await db()).transaction('photos', mode).objectStore('photos'); }
+function reqDone(req) { return new Promise((ok, fail) => { req.onsuccess = () => ok(req.result); req.onerror = () => fail(req.error); }); }
+async function allPhotos() { return reqDone((await photoStore('readonly')).getAll()); }
+
+// Shrink camera photos so hundreds of summaries still fit on the phone
+function compress(file) {
+  return new Promise((ok, fail) => {
+    const img = new Image(), url = URL.createObjectURL(file);
+    img.onload = () => {
+      const scale = Math.min(1, 1600 / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.width * scale); c.height = Math.round(img.height * scale);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      c.toBlob(b => b ? ok(b) : fail(new Error('toBlob')), 'image/jpeg', 0.75);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); fail(new Error('image')); };
+    img.src = url;
+  });
+}
+
+async function addPhotos(files) {
+  const subject = $('photo-subject').value, note = $('photo-note').value.trim();
+  if (!files.length) return;
+  toast('שומר...');
+  try {
+    for (const f of files) {
+      const blob = await compress(f);
+      await reqDone((await photoStore('readwrite')).add({ date: journalDay, subject, note, blob, created: Date.now() }));
+    }
+    toast(`📸 נשמר${files.length > 1 ? 'ו ' + files.length + ' תמונות' : ''}`);
+  } catch (e) {
+    toast('לא הצלחתי לשמור את התמונה');
+  }
+  renderJournal();
+}
+
+async function openPhoto(id) {
+  const p = await reqDone((await photoStore('readonly')).get(id));
+  const url = URL.createObjectURL(p.blob);
+  const el = document.createElement('div');
+  el.className = 'viewer';
+  el.innerHTML = `<img src="${url}">
+    <div style="margin-top:10px"><b>${esc(p.subject || 'סיכום')}</b> · <span class="sub">${esc(p.date)}</span></div>
+    ${p.note ? `<div class="sub">${esc(p.note)}</div>` : ''}
+    <div class="row" style="margin-top:8px">
+      <button class="btn small" style="flex:1" id="v-share">שיתוף</button>
+      <button class="btn small ghost" id="v-del">🗑️ מחיקה</button>
+      <button class="btn small ghost" id="v-close">סגירה</button>
+    </div>`;
+  document.body.appendChild(el);
+  const close = () => { URL.revokeObjectURL(url); el.remove(); };
+  el.querySelector('#v-close').onclick = close;
+  el.querySelector('#v-del').onclick = async () => {
+    if (!confirm('למחוק את התמונה?')) return;
+    await reqDone((await photoStore('readwrite')).delete(id));
+    close(); renderJournal();
+  };
+  el.querySelector('#v-share').onclick = async () => {
+    const file = new File([p.blob], `${p.subject || 'summary'}-${p.date}.jpg`, { type: 'image/jpeg' });
+    if (navigator.canShare?.({ files: [file] })) navigator.share({ files: [file], title: p.subject }).catch(() => {});
+    else toast('אין אפשרות שיתוף בדפדפן הזה');
+  };
+}
+
+// Subjects for summaries come from the learning tasks in the schedule
+function subjects() {
+  const names = state.tasks.filter(t => /^(👥|🎓|📖|📚|🧠)/.test(t.name))
+    .map(t => t.name.replace(/^\S+\s*/, ''));
+  return [...new Set(names), 'אחר'];
+}
+
+function moveDay(n) {
+  const d = addDays(parseKey(journalDay), n);
+  if (dateKey(d) > dateKey(today())) return;
+  journalDay = dateKey(d); renderJournal();
+}
+
+async function renderJournal() {
+  const isToday = journalDay === dateKey(today());
+  const label = parseKey(journalDay).toLocaleDateString('he-IL', { weekday: 'long', day: 'numeric', month: 'long' });
+  const list = goodThings(journalDay);
+  let html = `<h1>📓 יומן</h1>
+    <div class="daynav">
+      <button class="btn small ghost" onclick="moveDay(-1)">→</button>
+      <b>${isToday ? 'היום · ' : ''}${label}</b>
+      <button class="btn small ghost" onclick="moveDay(1)" ${isToday ? 'disabled style="opacity:.3"' : ''}>←</button>
+    </div>
+    <h2>✨ 5 דברים טובים שקרו ${isToday ? 'היום' : 'ביום הזה'}</h2>
+    ${list.map((v, i) => `<div class="good"><span>${i + 1}</span>
+      <input value="${esc(v)}" placeholder="${['משהו קטן שהצליח', 'מישהו שעשה לי טוב', 'משהו שלמדתי', 'רגע שנהניתי בו', 'משהו שאני גאה בו'][i]}"
+        oninput="setGood(${i}, this.value)"></div>`).join('')}
+    <h2>📸 סיכומים</h2>
+    <div class="row">
+      <select id="photo-subject">${subjects().map(n => `<option>${esc(n)}</option>`).join('')}</select>
+    </div>
+    <input id="photo-note" placeholder="הערה (לא חובה), למשל: פרק ז'" style="width:100%;margin-top:8px">
+    <label class="btn" style="display:block;text-align:center;box-sizing:border-box">📷 לצלם / להעלות סיכום
+      <input type="file" accept="image/*" multiple hidden onchange="addPhotos([...this.files])">
+    </label>
+    <div class="chips" id="photo-chips"></div>
+    <div class="gallery" id="photo-grid"></div>`;
+  $('tab-journal').innerHTML = html;
+
+  let photos = [];
+  try { photos = await allPhotos(); } catch (e) {}
+  if (currentTab !== 'journal') return;
+  photoUrls.forEach(u => URL.revokeObjectURL(u)); photoUrls = [];
+  const used = [...new Set(photos.map(p => p.subject))];
+  $('photo-chips').innerHTML = photos.length ? ['', ...used].map(s =>
+    `<button class="${s === photoFilter ? 'on' : ''}" onclick="photoFilter=this.dataset.s;renderJournal()" data-s="${esc(s)}">${s ? esc(s) : 'הכל'}</button>`).join('') : '';
+  const shown = photos.filter(p => !photoFilter || p.subject === photoFilter).sort((a, b) => b.created - a.created);
+  $('photo-grid').innerHTML = shown.length ? shown.map(p => {
+    const u = URL.createObjectURL(p.blob); photoUrls.push(u);
+    return `<div onclick="openPhoto(${p.id})"><img src="${u}" loading="lazy"><small>${esc(p.subject)} · ${p.date.slice(5).split('-').reverse().join('/')}</small></div>`;
+  }).join('') : '<p class="sub" style="grid-column:1/-1;margin:0">עוד אין סיכומים. מצלמים דף אחרי חברותא או שיעור, והוא נשמר כאן לפי נושא.</p>';
+}
+
 // ---------- Start ----------
+navigator.storage?.persist?.();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
 evaluatePastDays();
 render();

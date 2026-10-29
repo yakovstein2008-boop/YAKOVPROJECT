@@ -1,5 +1,5 @@
 // Offline cache so the app opens without internet
-const CACHE = 'luz-v2';
+const CACHE = 'luz-v3';
 const FILES = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {
