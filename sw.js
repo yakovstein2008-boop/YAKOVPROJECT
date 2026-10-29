@@ -1,5 +1,5 @@
 // Offline cache so the app opens without internet
-const CACHE = 'luz-v1';
+const CACHE = 'luz-v2';
 const FILES = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {
@@ -13,8 +13,13 @@ self.addEventListener('activate', e => {
   self.clients.claim();
 });
 
+// Network first so updates arrive right away; the cache is only for offline use
 self.addEventListener('fetch', e => {
-  e.respondWith(caches.match(e.request).then(r => r || fetch(e.request)));
+  e.respondWith(fetch(e.request, { cache: 'no-cache' }).then(r => {
+    const copy = r.clone();
+    caches.open(CACHE).then(c => c.put(e.request, copy));
+    return r;
+  }).catch(() => caches.match(e.request)));
 });
 
 // Tapping a notification opens the app

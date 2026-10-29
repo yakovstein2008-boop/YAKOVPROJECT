@@ -111,19 +111,35 @@
 <script>
 // ---------- Defaults ----------
 const DAY_NAMES = ['א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ש'];
-const WEEKDAYS = [0, 1, 2, 3, 4, 5];       // Sunday–Friday; Shabbat is a rest day
-const STUDY_DAYS = [0, 1, 2, 3, 4];
+const STUDY = [0, 1, 2, 3, 4];   // Sunday–Thursday: full mechina day
+const ALL = [0, 1, 2, 3, 4, 5];  // Sunday–Friday; Shabbat is a rest day
+const FRIDAY = [5];
 
+const SCHEDULE_VERSION = 2;
 const DEFAULT_TASKS = [
-  { name: '🙏 קימה לתפילת שחרית', time: '06:30', points: 20, days: WEEKDAYS },
-  { name: '🛏️ לסדר את המיטה',      time: '06:45', points: 10, days: WEEKDAYS },
-  { name: '🍳 ארוחת בוקר נורמלית',  time: '08:00', points: 10, days: WEEKDAYS },
-  { name: '📚 לימוד',               time: '09:00', points: 15, days: STUDY_DAYS },
-  { name: '🍽️ ארוחת צהריים',       time: '13:00', points: 10, days: WEEKDAYS },
-  { name: '💪 אימון כוח קצר',       time: '17:00', points: 15, days: WEEKDAYS },
-  { name: '🏃 ריצה',                time: '17:30', points: 15, days: [0, 2, 4] },
-  { name: '🍲 ארוחת ערב',           time: '19:30', points: 10, days: WEEKDAYS },
-  { name: '🧹 לסדר את החדר',        time: '21:30', points: 10, days: WEEKDAYS },
+  { name: '⏰ קימה: לסדר חדר, שיניים, להתלבש', time: '07:00', points: 20, days: ALL },
+  { name: '🙏 שחרית',                         time: '07:15', points: 25, days: ALL },
+  { name: '🍳 ארוחת בוקר נורמלית',            time: '08:00', points: 10, days: ALL },
+  { name: '📖 סדר הלכה',                      time: '08:15', points: 10, days: STUDY },
+  { name: '🎓 שיעור בוקר',                    time: '09:00', points: 10, days: STUDY },
+  { name: '📚 סדר בוקר – חברותא',             time: '09:30', points: 15, days: STUDY },
+  { name: '🧠 שיעור עיון',                    time: '12:00', points: 10, days: STUDY },
+  { name: '🍽️ ארוחת צהריים נורמלית',         time: '13:00', points: 10, days: STUDY },
+  { name: '📕 לקרוא 20 דקות',                 time: '13:30', points: 5,  days: STUDY },
+  { name: '👥 נדב – נתיבות שלום',             time: '15:00', points: 10, days: STUDY },
+  { name: '🙏 מנחה',                          time: '15:15', points: 10, days: STUDY },
+  { name: '👥 אשל – נצח ישראל',               time: '15:30', points: 10, days: STUDY },
+  { name: '👥 גל – מורה נבוכים',              time: '16:30', points: 10, days: STUDY },
+  { name: '👥 אדלר – סוכה',                   time: '17:30', points: 10, days: STUDY },
+  { name: '🎓 שיעור ערב',                     time: '18:15', points: 10, days: STUDY },
+  { name: '🍲 ארוחת ערב',                     time: '19:30', points: 10, days: STUDY },
+  { name: '🎸 נגינה',                         time: '20:15', points: 5,  days: STUDY },
+  { name: '🙏 ערבית',                         time: '20:45', points: 10, days: STUDY },
+  { name: '👥 גרוסי – עבודה זרה',             time: '21:00', points: 10, days: STUDY },
+  { name: '💪 שיעור ערב שני / אימון / ריצה',  time: '22:00', points: 15, days: STUDY },
+  { name: '🚿 מקלחת',                         time: '23:15', points: 5,  days: STUDY },
+  { name: '😴 לישון',                         time: '23:45', points: 15, days: STUDY },
+  { name: '🧹 לסדר את החדר לשבת',             time: '12:00', points: 15, days: FRIDAY },
 ].map((t, i) => ({ id: 't' + i, ...t }));
 
 const DEFAULT_REWARDS = [
@@ -143,7 +159,7 @@ const DEFAULT_PENALTIES = [
 
 const LATE_GRACE_MIN = 45;   // done within 45 min of the time = on time, full points
 const DAY_BONUS = 20;        // finishing every task of the day
-const MISS_PENALTY = 10;     // points lost per missed task
+const DAY_START_H = 3;       // the day rolls over at 03:00, so going to sleep at 23:45 still counts for today
 
 // ---------- State ----------
 const KEY = 'luz-state-v1';
@@ -152,15 +168,18 @@ let state = load();
 function load() {
   try {
     const s = JSON.parse(localStorage.getItem(KEY));
-    if (s) return s;
+    if (s) {
+      if (s.scheduleVersion !== SCHEDULE_VERSION) { s.tasks = DEFAULT_TASKS; s.scheduleVersion = SCHEDULE_VERSION; }
+      return s;
+    }
   } catch (e) {}
   return {
     tasks: DEFAULT_TASKS, rewards: DEFAULT_REWARDS, penaltyList: DEFAULT_PENALTIES,
     points: 0, streak: 0, bestStreak: 0,
     days: {},          // 'YYYY-MM-DD' -> { done: {taskId: points}, result: 'ok'|'fail' }
     penalties: [],     // { text, date, done }
-    lastEval: dateKey(addDays(new Date(), -1)),
-    notified: {},
+    lastEval: dateKey(addDays(today(), -1)),
+    notified: {}, scheduleVersion: SCHEDULE_VERSION,
   };
 }
 function save() { localStorage.setItem(KEY, JSON.stringify(state)); }
@@ -172,7 +191,12 @@ function dateKey(d) {
 function addDays(d, n) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
 function parseKey(k) { const [y, m, d] = k.split('-').map(Number); return new Date(y, m - 1, d); }
 function minutesOf(hhmm) { const [h, m] = hhmm.split(':').map(Number); return h * 60 + m; }
-function nowMinutes() { const n = new Date(); return n.getHours() * 60 + n.getMinutes(); }
+// The "app day" starts at DAY_START_H, so 00:30 still belongs to yesterday's schedule
+function today() { return new Date(Date.now() - DAY_START_H * 3600e3); }
+function nowMinutes() {
+  const n = new Date(), m = n.getHours() * 60 + n.getMinutes();
+  return m < DAY_START_H * 60 ? m + 1440 : m;
+}
 function tasksFor(date) {
   return state.tasks.filter(t => t.days.includes(date.getDay()))
     .sort((a, b) => minutesOf(a.time) - minutesOf(b.time));
@@ -182,7 +206,7 @@ function dayRec(key) { return state.days[key] || (state.days[key] = { done: {} }
 // ---------- End-of-day judgement: reward or punish every day that has passed ----------
 let report = [];
 function evaluatePastDays() {
-  const yesterday = dateKey(addDays(new Date(), -1));
+  const yesterday = dateKey(addDays(today(), -1));
   let d = addDays(parseKey(state.lastEval), 1);
   while (dateKey(d) <= yesterday) {
     const key = dateKey(d);
@@ -198,7 +222,7 @@ function evaluatePastDays() {
         rec.result = 'ok';
         report.push(`✅ ${key}: עשית הכל! +${bonus} נקודות. רצף: ${state.streak} ימים 🔥`);
       } else {
-        const lost = missed.length * MISS_PENALTY;
+        const lost = missed.reduce((sum, t) => sum + t.points, 0);
         state.points = Math.max(0, state.points - lost);
         state.streak = 0;
         rec.result = 'fail';
@@ -217,7 +241,7 @@ function evaluatePastDays() {
 
 // ---------- Actions ----------
 function toggle(id) {
-  const key = dateKey(new Date());
+  const key = dateKey(today());
   const rec = dayRec(key);
   const task = state.tasks.find(t => t.id === id);
   if (id in rec.done) {
@@ -228,7 +252,7 @@ function toggle(id) {
     const pts = late ? Math.ceil(task.points / 2) : task.points;
     rec.done[id] = pts;
     state.points += pts;
-    const all = tasksFor(new Date()).every(t => t.id in rec.done);
+    const all = tasksFor(today()).every(t => t.id in rec.done);
     toast(all ? '🎉 סיימת את כל המשימות של היום! הבונוס מגיע בחצות'
               : late ? `+${pts} (חצי נקודות — באיחור)` : `+${pts} נקודות 💪`);
   }
@@ -257,7 +281,7 @@ async function notify(title, body) {
   else new Notification(title, { body });
 }
 function checkReminders() {
-  const now = new Date(), key = dateKey(now), rec = dayRec(key), m = nowMinutes();
+  const now = today(), key = dateKey(now), rec = dayRec(key), m = nowMinutes();
   for (const t of tasksFor(now)) {
     if (t.id in rec.done) continue;
     const start = minutesOf(t.time);
@@ -277,7 +301,7 @@ function checkReminders() {
 // ---------- Calendar export: reliable phone alarms even when the app is closed ----------
 function exportCalendar() {
   const byday = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
-  const start = dateKey(new Date()).replaceAll('-', '');
+  const start = dateKey(today()).replaceAll('-', '');
   const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//luz//he', 'CALSCALE:GREGORIAN'];
   for (const t of state.tasks) {
     if (!t.days.length) continue;
@@ -300,12 +324,12 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 function renderToday() {
-  const now = new Date(), rec = dayRec(dateKey(now)), m = nowMinutes();
+  const now = today(), rec = dayRec(dateKey(now)), m = nowMinutes();
   const tasks = tasksFor(now);
   const doneCount = tasks.filter(t => t.id in rec.done).length;
   const pct = tasks.length ? Math.round(doneCount / tasks.length * 100) : 100;
   const openPen = state.penalties.map((p, i) => ({ ...p, i })).filter(p => !p.done);
-  const greeting = m < 12 * 60 ? 'בוקר טוב' : m < 18 * 60 ? 'צהריים טובים' : 'ערב טוב';
+  const greeting = m < 5 * 60 || m >= 24 * 60 ? 'לילה טוב' : m < 12 * 60 ? 'בוקר טוב' : m < 18 * 60 ? 'צהריים טובים' : 'ערב טוב';
 
   let html = `<h1>${greeting} 👋</h1>
     <div class="sub">${now.toLocaleDateString('he-IL', { weekday: 'long', day: 'numeric', month: 'long' })}</div>
@@ -360,7 +384,7 @@ function renderRewards() {
 
   html += '<h2>30 הימים האחרונים</h2><div class="hist">';
   for (let i = 30; i >= 1; i--) {
-    const d = addDays(new Date(), -i), r = state.days[dateKey(d)]?.result;
+    const d = addDays(today(), -i), r = state.days[dateKey(d)]?.result;
     html += `<div class="${r === 'ok' ? 'ok' : r === 'fail' ? 'fail' : ''}">${d.getDate()}</div>`;
   }
   html += `</div>
@@ -368,7 +392,7 @@ function renderRewards() {
     <div class="sub" style="line-height:1.7">
       ✅ משימה בזמן (עד ${LATE_GRACE_MIN} דק' אחרי השעה) = נקודות מלאות. באיחור = חצי.<br>
       🔥 יום שלם בלי פספוס = בונוס ${DAY_BONUS} + עוד 2 על כל יום ברצף.<br>
-      ❌ כל משימה שפוספסה = −${MISS_PENALTY} נקודות, הרצף מתאפס, ומקבלים עונש.<br>
+      ❌ כל משימה שפוספסה = מפסידים את הנקודות שלה, הרצף מתאפס, ומקבלים עונש.<br>
       🔒 עונש פתוח נועל את חנות הפרסים עד שמבצעים אותו.<br>
       🕯️ בשבת אין משימות — הרצף לא נשבר.
     </div>`;
@@ -421,7 +445,7 @@ function setDay(i, d, on) {
 }
 function delTask(i) { if (confirm(`למחוק את "${state.tasks[i].name}"?`)) { state.tasks.splice(i, 1); save(); render(); } }
 function addTask() {
-  state.tasks.push({ id: 't' + Date.now(), name: 'משימה חדשה', time: '12:00', points: 10, days: [...WEEKDAYS] });
+  state.tasks.push({ id: 't' + Date.now(), name: 'משימה חדשה', time: '12:00', points: 10, days: [...STUDY] });
   save(); render();
 }
 
